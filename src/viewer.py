@@ -1,3 +1,7 @@
+#Este es un programa en Python para capturar el audio y video de unteléfono android
+#Por ahora, solo solo funciona para el Poco X7, se debe probar en otros
+
+
 import sys
 import socket
 import subprocess
