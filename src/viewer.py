@@ -1,6 +1,5 @@
-#Este es un programa en Python para capturar el audio y video de unteléfono android
-#Por ahora, solo solo funciona para el Poco X7, se debe probar en otros
-
+#3er versión del código
+#Ahora  funciona con el POCO X7 y POCO M3
 
 import sys
 import socket
@@ -8,6 +7,8 @@ import subprocess
 import os
 import time
 import av
+import numpy as np
+
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt, QThread, Signal
@@ -35,11 +36,12 @@ class VideoStreamThread(QThread):
     def run(self):
         print(f"📱 Iniciando {self.device_id}")
 
-        # 🔊 AUDIO SIN VENTANA
+        # 🔊 AUDIO OCULTO
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-        self.audio_process = subprocess.Popen([
+        self.audio_process = subprocess.Popen(
+            [
                 "C:\\xampp\\htdocs\\MirrorScreen\\scrcpy-win64-v3.3.4\\scrcpy.exe",
                 "-s", self.device_id,
                 "--no-video-playback",
@@ -65,13 +67,14 @@ class VideoStreamThread(QThread):
             "forward", f"tcp:{self.port}", "localabstract:scrcpy"
         ], check=True)
 
+        # 🔥 CONFIG MÁS COMPATIBLE
         shell_cmd = (
             "CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / "
             "com.genymobile.scrcpy.Server 3.3.4 "
             "log_level=error video=true audio=false control=false "
+            "video_codec=h264 "
             "max_size=1024 "
-            "tunnel_forward=true send_device_meta=true send_frame_meta=true "
-            "video_codec=h264"
+            "tunnel_forward=true send_device_meta=true send_frame_meta=true"
         )
 
         subprocess.Popen([
@@ -84,12 +87,14 @@ class VideoStreamThread(QThread):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect(("127.0.0.1", self.port))
 
+        # limpiar metadata
         sock.recv(64)
         sock.recv(8)
 
         codec = av.CodecContext.create('h264', 'r')
 
-        fps_limit = 30
+        buffer = b""
+        fps_limit = 60
         last_time = 0
 
         try:
@@ -98,10 +103,19 @@ class VideoStreamThread(QThread):
                 if not data:
                     break
 
-                packets = codec.parse(data)
+                buffer += data
+
+                try:
+                    packets = codec.parse(buffer)
+                    buffer = b""
+                except Exception:
+                    continue
 
                 for packet in packets:
-                    frames = codec.decode(packet)
+                    try:
+                        frames = codec.decode(packet)
+                    except Exception:
+                        continue
 
                     for frame in frames:
                         now = time.time()
@@ -109,14 +123,17 @@ class VideoStreamThread(QThread):
                             continue
                         last_time = now
 
-                        
-                        img = frame.to_ndarray(format='rgb24')
+                        try:
+                            # 🔥 CONVERSIÓN SEGURA
+                            img = frame.to_ndarray(format='rgb24')
+                            img = np.ascontiguousarray(img)
+                        except Exception:
+                            continue
 
                         h, w, _ = img.shape
 
-                        # 🔄 DETECTAR ROTACIÓN
+                        # 🔄 ROTACIÓN
                         orientation = "landscape" if w > h else "portrait"
-
                         if orientation != self.last_orientation:
                             self.last_orientation = orientation
                             self.resize_requested.emit(w, h)
@@ -163,16 +180,18 @@ class MirrorApp(QMainWindow):
         )
 
         self.label.setPixmap(scaled)
-        
+
     def resize_window(self, w, h):
         screen = self.screen().availableGeometry()
+
         max_w = screen.width() * 0.6
         max_h = screen.height() * 0.9
-        
+
         scale = min(max_w / w, max_h / h)
-        
+
         new_w = int(w * scale)
         new_h = int(h * scale)
+
         self.resize(new_w, new_h)
 
     def closeEvent(self, event):
